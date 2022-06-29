@@ -2,12 +2,20 @@ import os
 #import time
 import telegram.ext
 from telegram.ext import Updater, Filters, MessageHandler, CommandHandler, MessageFilter
-from telegram import ReplyKeyboardMarkup
+from telegram import ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 import requests
 
 import logging
 
-import re
+import validators
+
+import whois
+
+import time
+
+from selenium import webdriver
+from selenium.webdriver import FirefoxOptions
+from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 
 from dotenv import load_dotenv
 
@@ -29,77 +37,20 @@ bot = telegram.Bot(token=TELEGRAM_TOKEN)
 # Обработка входящих сообщений
 updater = Updater(token=TELEGRAM_TOKEN)
 
+#настраиваем браузер для корректной работы в headless режиме
+binary = FirefoxBinary('/bin/firefox')
+browser = webdriver.Firefox()
+browser = FirefoxOptions()
+browser.add_argument('--headless')
+browser.add_argument('--disable-gpu')
+browser.add_argument('--disable-dev-shm-usage')
+browser.add_argument('--no-sandbox')
+
+
 # ссылка на картинки
 URL = 'https://api.thecatapi.com/v1/images/search'
 # 'https://api.thecatapi.com/v1/images/search'
 NEWURL = 'https://api.thedogapi.com/v1/images/search'
-
-# def parse_homework_status(homework):
-#    homework_name = homework['homework_name']
-#    status = homework['status']
-#    if status not in ['rejected', 'approved']:
-#        raise ValueError(f'пришел неожиданный статус: {status}')
-#    elif status == 'rejected':
-#        verdict = 'К сожалению в работе нашлись ошибки.'
-#    elif status == 'approved':
-#        verdict = 'Ревьюеру всё понравилось, можно приступать к следующему уроку.'
-#    return f'У вас проверили работу "{homework_name}"!\n\n{verdict}'
-
-
-#def get_homework_statuses(current_timestamp):
-#    headers = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
-#    data = {
-#        'from_date': current_timestamp
-#    }
-#    homework_statuses = requests.get(URL, headers=headers, params=data)
-#    return homework_statuses.json()
-
-# отправка соощений
-#message='Фото котиков'
-
-
-#def send_message(message):
-#    return bot.send_message(chat_id=CHAT_ID, text=message)
-
-
-#send_message(message)
-
-# отправка фото
-#URL = 'https://cdn2.thecatapi.com/images/3dl.jpg'
-# Делаем GET-запрос к эндпоинту:
-#response = requests.get(URL).json()
-# Извлекаем из ответа URL картинки:
-#random_cat_url = response[0].get('url')
-
-
-#def send_photo(url):
-#    return bot.send_photo(chat_id=CHAT_ID, photo=url)
-
-
-#send_photo(random_cat_url)
-
-
-#def main():
-#    current_timestamp = int(time.time())  # начальное значение timestamp
-
-#    while True:
-#        try:
-#            new_homework = get_homework_statuses(current_timestamp)
-#            if new_homework.get('homeworks'):
-#                send_message(parse_homework_status(new_homework.get('homeworks')[0]))
-#            if new_homework.get('current_date') is not None:
-#                current_timestamp = new_homework.get('current_date')  # обновить timestamp
-#            time.sleep(600)  # опрашивать раз в десять минут
-
-#        except Exception as e:
-#            print(f'Бот упал с ошибкой: {e}')
-#            time.sleep(5)
-#            continue
-
-
-#if __name__ == '__main__':
-#    send_message('Start Bot')
-#    main()
 
 # генератор случайных картинок
 def get_new_image():
@@ -113,11 +64,35 @@ def get_new_image():
     random_cat = response[0].get('url')
     return random_cat
 
-
 # отправка картинок в бот
 def new_cat(update, context):
     chat = update.effective_chat
     context.bot.send_photo(chat.id, get_new_image())
+
+# обработка скриншотов
+def get_screenshot(update, context):
+    chat = update.effective_chat
+    url = ""
+    try:
+        url = update.message.text
+    except IndexError:
+        context.bot.send_message(chat_id=chat.id, text='You have not entered URL!')
+        return
+    if not validators.url(url):
+        context.bot.send_message(chat_id=chat.id, text='URL is invalid!')
+    else:
+        tic = time.perf_counter()
+        context.bot.send_message(chat_id=chat.id,  text='Подождите, информация загружается...')
+        photo_path = str(chat.id) + '.png'
+        browser = webdriver.Firefox()
+        browser.set_window_size(1280, 720)
+        browser.get(url)
+        browser.save_screenshot(photo_path)
+        browser.quit()
+        whois_info = whois.whois(url)
+        toc = time.perf_counter()
+        context.bot.send_photo(chat_id=chat.id, photo = open(photo_path, 'rb'), caption=f"{whois_info.domain_name}, Веб-сайт: {url} Время обработки: {toc - tic:0.4f} секунды")
+        context.bot.send_message(chat.id, text=f"{whois_info.domain_name}")
 
 
 def say_hi(update, context):
@@ -145,7 +120,7 @@ def wake_up(update, context):
         chat_id=chat.id,
         text='Привет,  {}! Меня зовут Olencuhk_Imager.'
              'Я - Бот для создания веб-скриншотов.'
-             'Чтобы получить скриншот - отправьте URL адрес сайта. Например, wikipedia.org'
+             'Чтобы получить скриншот - отправьте URL адрес сайта. Например, https://wikipedia.org'
              '• С помощью бота вы можете проверять подозрительные ссылки. (Айпилоггеры, фишинговые веб-сайты, скримеры и т.п)'
              '• Вы также можете добавить меня в свои чаты, и я смогу проверять ссылки, которые отправляют пользователи.'
              ' Olencuhk_Imager. использует chromedriver.'
@@ -172,7 +147,7 @@ def main():
         CommandHandler('start', wake_up)
     )
     updater.dispatcher.add_handler(
-        MessageHandler(my_filter, new_cat)
+        MessageHandler(my_filter, get_screenshot)
     )
     updater.dispatcher.add_handler(
         MessageHandler(Filters.text('Добавить Olenchuk_Imager в свой чат'), new_cat)
